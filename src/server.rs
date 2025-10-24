@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
-use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpListener;
+use tokio::fs;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
 
 pub(crate) struct Server {
     listener: TcpListener,
@@ -12,30 +12,39 @@ impl Server {
         Self { listener }
     }
 
-    pub(crate) fn run(&self) -> Result<()> {
-        for stream in self.listener.incoming() {
-            let stream = stream.map_err(Error::Io)?;
-            self.handle_connection(stream);
+    pub(crate) async fn run(&self) -> Result<()> {
+        loop {
+            let (stream, _) = self.listener.accept().await.map_err(Error::Io)?;
+            tokio::spawn(async move {
+                if let Err(e) = Server::handle_connection(stream).await {
+                    eprintln!("failed to handle connection: {}", e);
+                }
+            });
         }
-        Ok(())
     }
 
-    fn handle_connection<T: Read + Write>(&self, mut stream: T) {
-        let buf_reader = BufReader::new(&mut stream);
-        let request_line = buf_reader.lines().next().unwrap().unwrap();
+    async fn handle_connection(
+        mut stream: impl AsyncRead + AsyncWrite + Unpin,
+    ) -> std::io::Result<()> {
+        let mut buf_reader = BufReader::new(&mut stream);
+        let mut request_line = String::new();
+        buf_reader.read_line(&mut request_line).await?;
 
-        let (status_line, filename) = if request_line == "GET / HTTP/1.1" {
+        let (status_line, filename) = if request_line == "GET / HTTP/1.1\r\n" {
             ("HTTP/1.1 200 OK", "hello.html")
         } else {
             ("HTTP/1.1 404 NOT FOUND", "404.html")
         };
 
-        let contents = fs::read_to_string(filename).unwrap();
+        let contents = fs::read_to_string(filename).await?;
         let length = contents.len();
 
-        let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
+        let response =
+            format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
 
-        stream.write_all(response.as_bytes()).unwrap();
+        stream.write_all(response.as_bytes()).await?;
+        stream.flush().await?;
+        Ok(())
     }
 }
 
@@ -57,81 +66,89 @@ impl Display for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io;
+    use std::io::Cursor;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-    // A mock stream that uses in-memory vectors for reading and writing.
-    // This allows us to simulate a network connection without any actual I/O.
     struct MockStream {
-        read_data: Vec<u8>,
-        write_data: Vec<u8>,
+        reader: Cursor<Vec<u8>>,
+        writer: Vec<u8>,
     }
 
-    impl Read for MockStream {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            let size = std::cmp::min(buf.len(), self.read_data.len());
-            buf[..size].copy_from_slice(&self.read_data[..size]);
-            self.read_data = self.read_data.split_off(size);
-            Ok(size)
+    impl Unpin for MockStream {}
+
+    impl MockStream {
+        fn new(request: &str) -> Self {
+            MockStream {
+                reader: Cursor::new(request.as_bytes().to_vec()),
+                writer: Vec::new(),
+            }
         }
     }
 
-    impl Write for MockStream {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.write_data.extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
+    impl AsyncRead for MockStream {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            let this = self.get_mut();
+            let pos = this.reader.position() as usize;
+            let remaining_data = &this.reader.get_ref()[pos..];
+            let len = std::cmp::min(remaining_data.len(), buf.remaining());
+            buf.put_slice(&remaining_data[..len]);
+            this.reader.set_position((pos + len) as u64);
+            Poll::Ready(Ok(()))
         }
     }
 
-    #[test]
-    fn test_handle_connection_200_unit() {
-        // Simulate a client sending a valid request
-        let request = b"GET / HTTP/1.1\r\n";
-        let mut stream = MockStream {
-            read_data: request.to_vec(),
-            write_data: Vec::new(),
-        };
+    impl AsyncWrite for MockStream {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            self.get_mut().writer.extend_from_slice(buf);
+            Poll::Ready(Ok(buf.len()))
+        }
 
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let server = Server::new(listener);
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
 
-        server.handle_connection(&mut stream);
-
-        let contents = fs::read_to_string("hello.html").unwrap();
-        let expected_response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
-            contents.len(),
-            contents
-        );
-
-        let response = String::from_utf8(stream.write_data).unwrap();
-        assert_eq!(response, expected_response);
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
     }
 
-    #[test]
-    fn test_handle_connection_404_unit() {
-        let request = b"GET /invalid_path HTTP/1.1\r\n";
-        let mut stream = MockStream {
-            read_data: request.to_vec(),
-            write_data: Vec::new(),
-        };
+    #[tokio::test]
+    async fn test_handle_connection_get_request() {
+        let mut stream = MockStream::new("GET / HTTP/1.1\r\n");
 
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let server = Server::new(listener);
+        fs::write("hello.html", "<html><body>Hello</body></html>")
+            .await
+            .unwrap();
 
-        server.handle_connection(&mut stream);
+        Server::handle_connection(&mut stream).await.unwrap();
 
-        let contents = fs::read_to_string("404.html").unwrap();
-        let expected_response = format!(
-            "HTTP/1.1 404 NOT FOUND\r\nContent-Length: {}\r\n\r\n{}",
-            contents.len(),
-            contents
-        );
+        let response = String::from_utf8(stream.writer).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.contains("<html><body>Hello</body></html>"));
+    }
 
-        let response = String::from_utf8(stream.write_data).unwrap();
-        assert_eq!(response, expected_response);
+    #[tokio::test]
+    async fn test_handle_connection_not_found_request() {
+        let mut stream = MockStream::new("GET /notfound HTTP/1.1\r\n");
+
+        fs::write("404.html", "<html><body>404 Not Found</body></html>")
+            .await
+            .unwrap();
+
+        Server::handle_connection(&mut stream).await.unwrap();
+
+        let response = String::from_utf8(stream.writer).unwrap();
+        assert!(response.starts_with("HTTP/1.1 404 NOT FOUND"));
+        assert!(response.contains("<html><body>404 Not Found</body></html>"));
     }
 }
