@@ -1,4 +1,4 @@
-use crate::server::{Error, Result, Server};
+use crate::server::{Error, HttpRequest, HttpResponse, Result, Server};
 use tokio::net::TcpListener;
 
 #[cfg(test)]
@@ -7,9 +7,17 @@ mod server;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    async fn handle_request(request: HttpRequest) -> HttpResponse {
+        if request.path() == "GET / HTTP/1.1\r\n" {
+            HttpResponse::new("HTTP/1.1 200 OK", "hello.html")
+        } else {
+            HttpResponse::new("HTTP/1.1 404 NOT FOUND", "404.html")
+        }
+    }
+
     let listener = TcpListener::bind("127.0.0.1:7878")
         .await
         .map_err(Error::Io)?;
-    Server::new(listener).run().await?;
+    Server::new(listener).run(handle_request).await?;
     Ok(())
 }
