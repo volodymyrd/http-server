@@ -40,7 +40,7 @@ impl Server {
     pub(crate) async fn run<F, Fut>(&self, handler: F) -> Result<()>
     where
         F: Fn(HttpRequest) -> Fut + Send + Sync + 'static + Clone,
-        Fut: Future<Output = HttpResponse> + Send,
+        Fut: Future<Output = Result<HttpResponse>> + Send,
     {
         loop {
             let (mut stream, _) = self.listener.accept().await.map_err(Error::Io)?;
@@ -52,7 +52,7 @@ impl Server {
             let handler = handler.clone();
 
             tokio::spawn(async move {
-                let response = handler(request).await;
+                let response = handler(request).await.expect("HTTP response");
                 match Self::write_http_response(&mut stream, response).await {
                     Ok(_) => {}
                     Err(e) => {

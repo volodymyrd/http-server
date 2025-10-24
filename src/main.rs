@@ -14,10 +14,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_request(request: HttpRequest) -> HttpResponse {
-    if request.path() == "GET / HTTP/1.1\r\n" {
+async fn handle_request(request: HttpRequest) -> Result<HttpResponse> {
+    let response = if request.path() == "GET / HTTP/1.1\r\n" {
         HttpResponse::new("HTTP/1.1 200 OK", "hello.html")
     } else {
         HttpResponse::new("HTTP/1.1 404 NOT FOUND", "404.html")
-    }
+    };
+    Ok(response)
 }
