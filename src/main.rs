@@ -1,6 +1,8 @@
 use crate::server::{Error, Result, Server};
 use std::net::TcpListener;
 
+#[cfg(test)]
+mod integration_tests;
 mod server;
 
 fn main() -> Result<()> {
