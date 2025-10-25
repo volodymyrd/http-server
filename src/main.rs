@@ -1,9 +1,12 @@
-use crate::server::{Error, HttpRequest, HttpResponse, Result, Server};
+use crate::model::{Error, HttpMethod, HttpRequest, HttpResponse, Result};
 use tokio::net::TcpListener;
+use crate::server::Server;
 
 #[cfg(test)]
 mod integration_tests;
+mod model;
 mod server;
+mod utils;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -15,10 +18,10 @@ async fn main() -> Result<()> {
 }
 
 async fn handle_request(request: HttpRequest) -> Result<HttpResponse> {
-    let response = if request.path() == "GET / HTTP/1.1\r\n" {
-        HttpResponse::new("HTTP/1.1 200 OK", "hello.html")
-    } else {
-        HttpResponse::new("HTTP/1.1 404 NOT FOUND", "404.html")
+    let response = match request.method_and_path() {
+        (HttpMethod::Get, "/") => HttpResponse::new("HTTP/1.1 200 OK", "hello.html"),
+        (_, _) => HttpResponse::new("HTTP/1.1 404 NOT FOUND", "404.html"),
     };
+
     Ok(response)
 }

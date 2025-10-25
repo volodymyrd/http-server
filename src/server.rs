@@ -1,31 +1,8 @@
-use std::fmt::{Display, Formatter};
+use crate::model::{Error, HttpRequest, HttpResponse, Result};
+use crate::utils::extract_http_details;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-
-pub struct HttpRequest {
-    path: String,
-}
-
-impl HttpRequest {
-    pub fn path(&self) -> &str {
-        &self.path
-    }
-}
-
-pub struct HttpResponse {
-    status_line: String,
-    filename: String,
-}
-
-impl HttpResponse {
-    pub fn new(status_line: &str, filename: &str) -> Self {
-        Self {
-            status_line: status_line.to_string(),
-            filename: filename.to_string(),
-        }
-    }
-}
 
 #[derive(Debug)]
 pub(crate) struct Server {
@@ -45,9 +22,7 @@ impl Server {
         loop {
             let (mut stream, _) = self.listener.accept().await.map_err(Error::Io)?;
 
-            let request = Self::read_http_request(&mut stream)
-                .await
-                .map_err(Error::Io)?;
+            let request = Self::read_http_request(&mut stream).await?;
 
             let handler = handler.clone();
 
@@ -65,11 +40,15 @@ impl Server {
 
     async fn read_http_request(
         mut stream: impl AsyncRead + AsyncWrite + Unpin,
-    ) -> std::io::Result<HttpRequest> {
+    ) -> Result<HttpRequest> {
         let mut buf_reader = BufReader::new(&mut stream);
         let mut request_line = String::new();
-        buf_reader.read_line(&mut request_line).await?;
-        let request = HttpRequest { path: request_line };
+        buf_reader
+            .read_line(&mut request_line)
+            .await
+            .map_err(Error::Io)?;
+        let (method, path) = extract_http_details(&request_line)?;
+        let request = HttpRequest::new(method, path);
         Ok(request)
     }
 
@@ -77,32 +56,17 @@ impl Server {
         mut stream: impl AsyncWrite + Unpin,
         response: HttpResponse,
     ) -> std::io::Result<()> {
-        let contents = fs::read_to_string(response.filename).await?;
+        let contents = fs::read_to_string(response.filename()).await?;
         let length = contents.len();
 
         let response = format!(
             "{}\r\nContent-Length: {length}\r\n\r\n{contents}",
-            response.status_line
+            response.status_line()
         );
 
         stream.write_all(response.as_bytes()).await?;
         stream.flush().await?;
         Ok(())
-    }
-}
-
-pub(crate) type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug)]
-pub(crate) enum Error {
-    Io(std::io::Error),
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::Io(e) => write!(f, "IO error: {}", e),
-        }
     }
 }
 
@@ -113,6 +77,7 @@ mod tests {
     use std::pin::Pin;
     use std::task::{Context, Poll};
     use tokio::io::{AsyncRead, ReadBuf};
+    use crate::model::HttpMethod;
 
     struct MockStream {
         reader: Cursor<Vec<u8>>,
@@ -169,7 +134,7 @@ mod tests {
     async fn test_read_http_request() {
         let mut stream = MockStream::new("GET /test HTTP/1.1\r\n");
         let request = Server::read_http_request(&mut stream).await.unwrap();
-        assert_eq!(request.path(), "GET /test HTTP/1.1\r\n");
+        assert_eq!(request.method_and_path(), (HttpMethod::Get, "/test"));
     }
 
     #[tokio::test]
