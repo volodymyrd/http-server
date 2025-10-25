@@ -1,6 +1,7 @@
 use crate::handle_request;
-use crate::model::{Error, HttpRequest, HttpResponse};
+use crate::model::{Error, HttpMethod, HttpRequest, HttpResponse};
 use crate::server::Server;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
@@ -45,6 +46,36 @@ async fn handle_request_with_error(_request: HttpRequest) -> crate::model::Resul
 #[tokio::test]
 async fn test_server_responds_500_internal_server_error() {
     let addr = set_up(handle_request_with_error).await;
+
+    let response = send_request(&addr, "GET / \r\n").await;
+
+    assert_eq!(response.trim(), "HTTP/1.1 500 INTERNAL SERVER ERROR");
+}
+
+async fn handle_request_with_timeout(request: HttpRequest) -> crate::model::Result<HttpResponse> {
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let response = match request.method_and_path() {
+        (HttpMethod::Get, "/") => HttpResponse::ok("hello.html"),
+        (_, _) => HttpResponse::not_found("404.html"),
+    };
+
+    Ok(response)
+}
+
+async fn handler_with_timeout(request: HttpRequest) -> crate::model::Result<HttpResponse> {
+    let result =
+        tokio::time::timeout(Duration::from_secs(2), handle_request_with_timeout(request)).await;
+
+    match result {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(error)) => Err(error),
+        Err(_timeout_elapsed) => Err(Error::App("Timeout exceeded".to_string())),
+    }
+}
+
+#[tokio::test]
+async fn test_server_responds_500_timeout() {
+    let addr = set_up(handler_with_timeout).await;
 
     let response = send_request(&addr, "GET / \r\n").await;
 
