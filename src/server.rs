@@ -64,8 +64,10 @@ impl Server {
         let length = contents.len();
 
         let response = format!(
-            "{}\r\nContent-Length: {length}\r\n\r\n{contents}",
+            "{}\r\nContent-Length: {}\r\n\r\n{}",
             response.status(),
+            length,
+            contents
         );
 
         stream.write_all(response.as_bytes()).await?;
@@ -159,5 +161,27 @@ mod tests {
         );
 
         fs::remove_file("test.html").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_write_http_response_internal_server_error() {
+        let mut stream = MockStream::new("");
+        let response = HttpResponse::internal_server_error("500.html");
+
+        fs::write("500.html", "Internal Server Error")
+            .await
+            .unwrap();
+
+        Server::write_http_response(&mut stream, response)
+            .await
+            .unwrap();
+
+        let response_str = String::from_utf8(stream.writer).unwrap();
+        assert_eq!(
+            response_str,
+            "HTTP/1.1 500 INTERNAL SERVER ERROR\r\nContent-Length: 21\r\n\r\nInternal Server Error"
+        );
+
+        fs::remove_file("500.html").await.unwrap();
     }
 }

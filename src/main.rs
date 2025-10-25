@@ -4,6 +4,7 @@ use tokio::net::TcpListener;
 
 #[cfg(test)]
 mod integration_tests;
+
 mod model;
 mod server;
 mod utils;
