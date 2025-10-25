@@ -9,6 +9,8 @@ pub enum Error {
     MissingHttpMethod,
     MissingRequestPath,
     UnrecognizedHttpMethod,
+    #[allow(dead_code)]
+    App(String),
     Io(std::io::Error),
 }
 
@@ -23,6 +25,7 @@ impl Display for Error {
                 write!(f, "HTTP request line is missing the path (e.g., /).")
             }
             Error::UnrecognizedHttpMethod => write!(f, "HTTP method is not recognized."),
+            Error::App(msg) => write!(f, "Application error: {}", msg),
             Error::Io(e) => write!(f, "IO error: {}", e),
         }
     }

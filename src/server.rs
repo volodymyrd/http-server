@@ -145,10 +145,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_http_response() {
+        let file_name = "test1.html";
         let mut stream = MockStream::new("");
-        let response = HttpResponse::ok("test.html");
+        let response = HttpResponse::ok(file_name);
 
-        fs::write("test.html", "Test content").await.unwrap();
+        fs::write(file_name, "Test content").await.unwrap();
 
         Server::write_http_response(&mut stream, response)
             .await
@@ -160,17 +161,16 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nTest content"
         );
 
-        fs::remove_file("test.html").await.unwrap();
+        fs::remove_file(file_name).await.unwrap();
     }
 
     #[tokio::test]
     async fn test_write_http_response_internal_server_error() {
+        let file_name = "test2.html";
         let mut stream = MockStream::new("");
-        let response = HttpResponse::internal_server_error("500.html");
+        let response = HttpResponse::internal_server_error(file_name);
 
-        fs::write("500.html", "Internal Server Error")
-            .await
-            .unwrap();
+        fs::write(file_name, "Internal Server Error").await.unwrap();
 
         Server::write_http_response(&mut stream, response)
             .await
@@ -182,6 +182,6 @@ mod tests {
             "HTTP/1.1 500 INTERNAL SERVER ERROR\r\nContent-Length: 21\r\n\r\nInternal Server Error"
         );
 
-        fs::remove_file("500.html").await.unwrap();
+        fs::remove_file(file_name).await.unwrap();
     }
 }
