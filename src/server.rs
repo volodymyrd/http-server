@@ -27,7 +27,11 @@ impl Server {
             let handler = handler.clone();
 
             tokio::spawn(async move {
-                let response = handler(request).await.expect("HTTP response");
+                let response = handler(request).await.unwrap_or_else(|e| {
+                    eprintln!("Error handling request: {:?}", e);
+                    HttpResponse::internal_server_error("500.html")
+                });
+
                 match Self::write_http_response(&mut stream, response).await {
                     Ok(_) => {}
                     Err(e) => {
@@ -61,7 +65,7 @@ impl Server {
 
         let response = format!(
             "{}\r\nContent-Length: {length}\r\n\r\n{contents}",
-            response.status_line()
+            response.status(),
         );
 
         stream.write_all(response.as_bytes()).await?;
@@ -73,11 +77,11 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::HttpMethod;
     use std::io::Cursor;
     use std::pin::Pin;
     use std::task::{Context, Poll};
     use tokio::io::{AsyncRead, ReadBuf};
-    use crate::model::HttpMethod;
 
     struct MockStream {
         reader: Cursor<Vec<u8>>,
@@ -140,7 +144,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_http_response() {
         let mut stream = MockStream::new("");
-        let response = HttpResponse::new("HTTP/1.1 200 OK", "test.html");
+        let response = HttpResponse::ok("test.html");
 
         fs::write("test.html", "Test content").await.unwrap();
 

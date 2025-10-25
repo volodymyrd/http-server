@@ -68,22 +68,85 @@ impl HttpRequest {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct HttpCode(u16);
+
+impl HttpCode {
+    pub fn ok() -> Self {
+        Self(200)
+    }
+
+    pub fn not_found() -> Self {
+        Self(404)
+    }
+
+    pub fn internal_server_error() -> Self {
+        Self(500)
+    }
+}
+
+impl Display for HttpCode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            200 => write!(f, "200 OK"),
+            404 => write!(f, "404 NOT FOUND"),
+            500 => write!(f, "500 INTERNAL SERVER ERROR"),
+            _ => write!(f, "Undocumented HTTP code"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum HttpStatus {
+    Ok(HttpCode),
+    AppError(HttpCode),
+    ServerError(HttpCode),
+}
+
 #[derive(Debug)]
 pub struct HttpResponse {
-    status_line: String,
+    status: HttpStatus,
     filename: String,
 }
 
+const HTTP_PROTOCOL_VERSION: &str = "HTTP/1.1";
+
+impl Display for HttpStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            HttpStatus::Ok(code) => format!("{} {code}", HTTP_PROTOCOL_VERSION),
+            HttpStatus::AppError(code) => format!("{} {code}", HTTP_PROTOCOL_VERSION),
+            HttpStatus::ServerError(code) => format!("{} {code}", HTTP_PROTOCOL_VERSION),
+        };
+        write!(f, "{}", str)
+    }
+}
+
 impl HttpResponse {
-    pub fn new(status_line: &str, filename: &str) -> Self {
+    pub fn new(status: HttpStatus, filename: &str) -> Self {
         Self {
-            status_line: status_line.to_string(),
+            status,
             filename: filename.to_string(),
         }
     }
 
-    pub fn status_line(&self) -> &str {
-        &self.status_line
+    pub fn ok(filename: &str) -> Self {
+        Self::new(HttpStatus::Ok(HttpCode::ok()), filename)
+    }
+
+    pub fn not_found(filename: &str) -> Self {
+        Self::new(HttpStatus::AppError(HttpCode::not_found()), filename)
+    }
+
+    pub fn internal_server_error(filename: &str) -> Self {
+        Self::new(
+            HttpStatus::ServerError(HttpCode::internal_server_error()),
+            filename,
+        )
+    }
+
+    pub fn status(&self) -> HttpStatus {
+        self.status
     }
 
     pub fn filename(&self) -> &str {

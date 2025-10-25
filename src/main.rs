@@ -1,6 +1,6 @@
 use crate::model::{Error, HttpMethod, HttpRequest, HttpResponse, Result};
-use tokio::net::TcpListener;
 use crate::server::Server;
+use tokio::net::TcpListener;
 
 #[cfg(test)]
 mod integration_tests;
@@ -19,8 +19,8 @@ async fn main() -> Result<()> {
 
 async fn handle_request(request: HttpRequest) -> Result<HttpResponse> {
     let response = match request.method_and_path() {
-        (HttpMethod::Get, "/") => HttpResponse::new("HTTP/1.1 200 OK", "hello.html"),
-        (_, _) => HttpResponse::new("HTTP/1.1 404 NOT FOUND", "404.html"),
+        (HttpMethod::Get, "/") => HttpResponse::ok("hello.html"),
+        (_, _) => HttpResponse::not_found("404.html"),
     };
 
     Ok(response)
