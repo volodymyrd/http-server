@@ -110,6 +110,7 @@ pub enum HttpStatus {
 pub struct HttpResponse {
     status: HttpStatus,
     filename: String,
+    content_type: String,
 }
 
 const HTTP_PROTOCOL_VERSION: &str = "HTTP/1.1";
@@ -126,25 +127,35 @@ impl Display for HttpStatus {
 }
 
 impl HttpResponse {
-    pub fn new(status: HttpStatus, filename: &str) -> Self {
+    pub fn new(status: HttpStatus, filename: &str, content_type: &str) -> Self {
         Self {
             status,
             filename: filename.to_string(),
+            content_type: content_type.to_string(),
         }
     }
 
     pub fn ok(filename: &str) -> Self {
-        Self::new(HttpStatus::Ok(HttpCode::ok()), filename)
+        Self::new(HttpStatus::Ok(HttpCode::ok()), filename, "text/html")
+    }
+
+    pub fn ok_with_content_type(filename: &str, content_type: &str) -> Self {
+        Self::new(HttpStatus::Ok(HttpCode::ok()), filename, content_type)
     }
 
     pub fn not_found(filename: &str) -> Self {
-        Self::new(HttpStatus::AppError(HttpCode::not_found()), filename)
+        Self::new(
+            HttpStatus::AppError(HttpCode::not_found()),
+            filename,
+            "text/html",
+        )
     }
 
     pub fn internal_server_error(filename: &str) -> Self {
         Self::new(
             HttpStatus::ServerError(HttpCode::internal_server_error()),
             filename,
+            "text/html",
         )
     }
 
@@ -154,5 +165,9 @@ impl HttpResponse {
 
     pub fn filename(&self) -> &str {
         &self.filename
+    }
+
+    pub fn content_type(&self) -> &str {
+        &self.content_type
     }
 }

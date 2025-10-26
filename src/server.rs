@@ -64,9 +64,10 @@ impl Server {
         let length = contents.len();
 
         let response = format!(
-            "{}\r\nContent-Length: {}\r\n\r\n{}",
+            "{}\r\nContent-Length: {}\r\nContent-Type: {}\r\n\r\n{}",
             response.status(),
             length,
+            response.content_type(),
             contents
         );
 
@@ -158,7 +159,7 @@ mod tests {
         let response_str = String::from_utf8(stream.writer).unwrap();
         assert_eq!(
             response_str,
-            "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nTest content"
+            "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/html\r\n\r\nTest content"
         );
 
         fs::remove_file(file_name).await.unwrap();
@@ -179,7 +180,7 @@ mod tests {
         let response_str = String::from_utf8(stream.writer).unwrap();
         assert_eq!(
             response_str,
-            "HTTP/1.1 500 INTERNAL SERVER ERROR\r\nContent-Length: 21\r\n\r\nInternal Server Error"
+            "HTTP/1.1 500 INTERNAL SERVER ERROR\r\nContent-Length: 21\r\nContent-Type: text/html\r\n\r\nInternal Server Error"
         );
 
         fs::remove_file(file_name).await.unwrap();

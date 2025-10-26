@@ -14,7 +14,9 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:7878")
         .await
         .map_err(Error::Io)?;
-    Server::new(listener).run(handle_request).await?;
+    Server::new(listener)
+        .run(handle_request_with_content_type)
+        .await?;
     Ok(())
 }
 
@@ -22,6 +24,17 @@ async fn handle_request(request: HttpRequest) -> Result<HttpResponse> {
     let response = match request.method_and_path() {
         (HttpMethod::Get, "/") => HttpResponse::ok("hello.html"),
         (_, _) => HttpResponse::not_found("404.html"),
+    };
+
+    Ok(response)
+}
+
+async fn handle_request_with_content_type(request: HttpRequest) -> Result<HttpResponse> {
+    let response = match request.method_and_path() {
+        (HttpMethod::Get, "/hi") => {
+            HttpResponse::ok_with_content_type("hi.json", "application/json")
+        }
+        (_, _) => handle_request(request).await?,
     };
 
     Ok(response)
