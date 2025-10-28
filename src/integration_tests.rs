@@ -129,9 +129,9 @@ pub struct ResponseFuture<F> {
 impl<F, Response, Error> Future for ResponseFuture<F>
 where
     F: Future<Output = Result<Response, Error>>,
-    Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    Error: Into<model::Error>,
 {
-    type Output = Result<Response, Box<dyn std::error::Error + Send + Sync>>;
+    type Output = Result<Response, model::Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
@@ -146,7 +146,7 @@ where
 
         match this.sleep.poll(cx) {
             Poll::Ready(()) => {
-                let error = Box::new(model::Error::App("Timeout exceeded".to_string()));
+                let error = model::Error::App("Timeout exceeded".to_string());
                 return Poll::Ready(Err(error));
             }
             Poll::Pending => {}
@@ -159,10 +159,10 @@ where
 impl<S, Request> Service<Request> for Timeout<S>
 where
     S: Service<Request>,
-    S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    S::Error: Into<Error>,
 {
     type Response = S::Response;
-    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Error = Error;
     type Future = ResponseFuture<S::Future>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
