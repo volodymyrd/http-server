@@ -1,9 +1,10 @@
-use crate::model::{Error, Handler, HttpRequest, HttpResponse, Result};
+use crate::model::{Error, HttpRequest, HttpResponse, Result};
 use crate::utils::extract_http_details;
 use std::fmt::Debug;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
+use tower::Service;
 
 #[derive(Debug)]
 pub(crate) struct Server {
@@ -17,9 +18,9 @@ impl Server {
 
     pub(crate) async fn run<T>(&self, handler: T) -> Result<()>
     where
-        T: Handler<HttpRequest, Response = HttpResponse> + Clone + Send + Sync + 'static,
-        <T as Handler<HttpRequest>>::Future: Send,
-        <T as Handler<HttpRequest>>::Error: Debug,
+        T: Service<HttpRequest, Response = HttpResponse> + Clone + Send + Sync + 'static,
+        <T as Service<HttpRequest>>::Future: Send,
+        <T as Service<HttpRequest>>::Error: Debug,
     {
         loop {
             let (mut stream, _) = self.listener.accept().await.map_err(Error::Io)?;

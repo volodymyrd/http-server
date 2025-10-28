@@ -1,17 +1,19 @@
-use crate::model::{Error, Handler, HttpMethod, HttpRequest, HttpResponse};
+use crate::model::{Error, HttpMethod, HttpRequest, HttpResponse};
 use crate::server::Server;
 use crate::{JsonContentType, RequestHandler};
 use std::fmt::Debug;
 use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+use tower::Service;
 
 async fn set_up<T>(handle_request: T) -> String
 where
-    T: Handler<HttpRequest, Response = HttpResponse> + Clone + Send + Sync + 'static,
-    <T as Handler<HttpRequest>>::Future: Send,
-    <T as Handler<HttpRequest>>::Error: Debug,
+    T: Service<HttpRequest, Response = HttpResponse> + Clone + Send + Sync + 'static,
+    <T as Service<HttpRequest>>::Future: Send,
+    <T as Service<HttpRequest>>::Error: Debug,
 {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -47,10 +49,14 @@ async fn test_server_responds_404_not_found() {
 #[derive(Clone)]
 struct RequestHandlerWithError;
 
-impl Handler<HttpRequest> for RequestHandlerWithError {
+impl Service<HttpRequest> for RequestHandlerWithError {
     type Response = HttpResponse;
     type Error = Error;
     type Future = Pin<Box<dyn Future<Output = crate::model::Result<HttpResponse>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        todo!()
+    }
 
     fn call(&mut self, request: HttpRequest) -> Self::Future {
         Box::pin(async move { handle_request_with_error(request).await })
@@ -74,10 +80,15 @@ async fn test_server_responds_500_internal_server_error() {
 #[derive(Clone)]
 struct RequestHandlerWithTimeout;
 
-impl Handler<HttpRequest> for RequestHandlerWithTimeout {
+impl Service<HttpRequest> for RequestHandlerWithTimeout {
     type Response = HttpResponse;
     type Error = Error;
     type Future = Pin<Box<dyn Future<Output = crate::model::Result<HttpResponse>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        todo!()
+    }
+
     fn call(&mut self, request: HttpRequest) -> Self::Future {
         Box::pin(async move { handle_request_with_timeout(request).await })
     }
@@ -109,14 +120,18 @@ impl<T> Timeout<T> {
     }
 }
 
-impl<T> Handler<HttpRequest> for Timeout<T>
+impl<T> Service<HttpRequest> for Timeout<T>
 where
-    T: Handler<HttpRequest, Response = HttpResponse, Error = Error> + Clone + Send + 'static,
-    <T as Handler<HttpRequest>>::Future: Send,
+    T: Service<HttpRequest, Response = HttpResponse, Error = Error> + Clone + Send + 'static,
+    <T as Service<HttpRequest>>::Future: Send,
 {
     type Response = HttpResponse;
     type Error = Error;
     type Future = Pin<Box<dyn Future<Output = crate::model::Result<HttpResponse>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        todo!()
+    }
 
     fn call(&mut self, request: HttpRequest) -> Self::Future {
         // Get an owned clone of `&mut self`

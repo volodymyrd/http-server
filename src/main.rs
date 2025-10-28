@@ -1,8 +1,10 @@
-use crate::model::{Error, Handler, HttpMethod, HttpRequest, HttpResponse, Result};
+use crate::model::{Error, HttpMethod, HttpRequest, HttpResponse, Result};
 use crate::server::Server;
 use std::future::Future;
 use std::pin::Pin;
+use std::task::{Context, Poll};
 use tokio::net::TcpListener;
+use tower::Service;
 
 #[cfg(test)]
 mod integration_tests;
@@ -27,10 +29,14 @@ async fn main() -> Result<()> {
 #[derive(Clone)]
 struct RequestHandler;
 
-impl Handler<HttpRequest> for RequestHandler {
+impl Service<HttpRequest> for RequestHandler {
     type Response = HttpResponse;
     type Error = Error;
     type Future = Pin<Box<dyn Future<Output = Result<HttpResponse>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+        todo!()
+    }
 
     fn call(&mut self, request: HttpRequest) -> Self::Future {
         Box::pin(async move { handle_request(request).await })
@@ -57,14 +63,18 @@ impl<T> JsonContentType<T> {
     }
 }
 
-impl<T> Handler<HttpRequest> for JsonContentType<T>
+impl<T> Service<HttpRequest> for JsonContentType<T>
 where
-    T: Handler<HttpRequest, Response = HttpResponse, Error = Error> + Clone + Send + 'static,
-    <T as Handler<HttpRequest>>::Future: Send,
+    T: Service<HttpRequest, Response = HttpResponse, Error = Error> + Clone + Send + 'static,
+    <T as Service<HttpRequest>>::Future: Send,
 {
     type Response = HttpResponse;
     type Error = Error;
     type Future = Pin<Box<dyn Future<Output = Result<HttpResponse>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+        todo!()
+    }
 
     fn call(&mut self, request: HttpRequest) -> Self::Future {
         let mut this = self.clone();
