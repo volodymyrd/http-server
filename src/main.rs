@@ -1,5 +1,6 @@
-use crate::model::{Error, HttpMethod, HttpRequest, HttpResponse, Result};
+use crate::model::{Error, Handler, HttpMethod, HttpRequest, HttpResponse, Result};
 use crate::server::Server;
+use std::pin::Pin;
 use tokio::net::TcpListener;
 
 #[cfg(test)]
@@ -14,10 +15,23 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:7878")
         .await
         .map_err(Error::Io)?;
-    Server::new(listener)
-        .run(handle_request_with_content_type)
-        .await?;
+
+    let handler = RequestHandler;
+    let handler = JsonContentType::new(handler);
+
+    Server::new(listener).run(handler).await?;
     Ok(())
+}
+
+#[derive(Clone)]
+struct RequestHandler;
+
+impl Handler for RequestHandler {
+    type Future = Pin<Box<dyn Future<Output = Result<HttpResponse>> + Send>>;
+
+    fn call(&mut self, request: HttpRequest) -> Self::Future {
+        Box::pin(async move { handle_request(request).await })
+    }
 }
 
 async fn handle_request(request: HttpRequest) -> Result<HttpResponse> {
@@ -29,13 +43,38 @@ async fn handle_request(request: HttpRequest) -> Result<HttpResponse> {
     Ok(response)
 }
 
-async fn handle_request_with_content_type(request: HttpRequest) -> Result<HttpResponse> {
-    let response = match request.method_and_path() {
-        (HttpMethod::Get, "/hi") => {
-            HttpResponse::ok_with_content_type("hi.json", "application/json")
-        }
-        (_, _) => handle_request(request).await?,
-    };
+#[derive(Clone)]
+struct JsonContentType<T> {
+    inner_handler: T,
+}
 
-    Ok(response)
+impl<T> JsonContentType<T>
+where
+    T: Handler,
+{
+    fn new(inner_handler: T) -> Self {
+        Self { inner_handler }
+    }
+}
+
+impl<T> Handler for JsonContentType<T>
+where
+    T: Handler + Clone + Send + 'static,
+{
+    type Future = Pin<Box<dyn Future<Output = crate::model::Result<HttpResponse>> + Send>>;
+
+    fn call(&mut self, request: HttpRequest) -> Self::Future {
+        let mut this = self.clone();
+
+        Box::pin(async move {
+            let response = match request.method_and_path() {
+                (HttpMethod::Get, "/hi") => {
+                    HttpResponse::ok_with_content_type("hi.json", "application/json")
+                }
+                (_, _) => this.inner_handler.call(request).await?,
+            };
+
+            Ok(response)
+        })
+    }
 }

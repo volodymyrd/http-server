@@ -1,4 +1,4 @@
-use crate::model::{Error, HttpRequest, HttpResponse, Result};
+use crate::model::{Error, Handler, HttpRequest, HttpResponse, Result};
 use crate::utils::extract_http_details;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -14,20 +14,20 @@ impl Server {
         Self { listener }
     }
 
-    pub(crate) async fn run<F, Fut>(&self, handler: F) -> Result<()>
+    pub(crate) async fn run<T>(&self, handler: T) -> Result<()>
     where
-        F: Fn(HttpRequest) -> Fut + Send + Sync + 'static + Clone,
-        Fut: Future<Output = Result<HttpResponse>> + Send,
+        T: Handler + Clone + Send + Sync + 'static,
+        <T as Handler>::Future: Send,
     {
         loop {
             let (mut stream, _) = self.listener.accept().await.map_err(Error::Io)?;
 
             let request = Self::read_http_request(&mut stream).await?;
 
-            let handler = handler.clone();
+            let mut handler = handler.clone();
 
             tokio::spawn(async move {
-                let response = handler(request).await.unwrap_or_else(|e| {
+                let response = handler.call(request).await.unwrap_or_else(|e| {
                     eprintln!("Error handling request: {:?}", e);
                     HttpResponse::internal_server_error("500.html")
                 });

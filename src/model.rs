@@ -116,7 +116,7 @@ pub struct HttpResponse {
 const HTTP_PROTOCOL_VERSION: &str = "HTTP/1.1";
 
 impl Display for HttpStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let str = match self {
             HttpStatus::Ok(code) => format!("{} {code}", HTTP_PROTOCOL_VERSION),
             HttpStatus::AppError(code) => format!("{} {code}", HTTP_PROTOCOL_VERSION),
@@ -170,4 +170,10 @@ impl HttpResponse {
     pub fn content_type(&self) -> &str {
         &self.content_type
     }
+}
+
+pub trait Handler {
+    type Future: Future<Output = Result<HttpResponse>> + Send;
+
+    fn call(&mut self, request: HttpRequest) -> Self::Future;
 }

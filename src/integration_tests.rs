@@ -1,14 +1,15 @@
-use crate::model::{Error, HttpMethod, HttpRequest, HttpResponse};
+use crate::model::{Error, Handler, HttpMethod, HttpRequest, HttpResponse};
 use crate::server::Server;
-use crate::{handle_request, handle_request_with_content_type};
+use crate::{JsonContentType, RequestHandler};
+use std::pin::Pin;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
-async fn set_up<F, Fut>(handle_request: F) -> String
+async fn set_up<T>(handle_request: T) -> String
 where
-    F: Fn(HttpRequest) -> Fut + Send + Sync + 'static + Clone,
-    Fut: Future<Output = crate::model::Result<HttpResponse>> + Send,
+    T: Handler + Clone + Send + Sync + 'static,
+    <T as Handler>::Future: Send,
 {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -23,7 +24,8 @@ where
 
 #[tokio::test]
 async fn test_server_responds_200_ok() {
-    let addr = set_up(handle_request).await;
+    let handler = RequestHandler;
+    let addr = set_up(handler).await;
 
     let response = send_request(&addr, "GET / HTTP/1.1\r\n").await;
 
@@ -32,11 +34,23 @@ async fn test_server_responds_200_ok() {
 
 #[tokio::test]
 async fn test_server_responds_404_not_found() {
-    let addr = set_up(handle_request).await;
+    let handler = RequestHandler;
+    let addr = set_up(handler).await;
 
     let response = send_request(&addr, "GET /not_a_page HTTP/1.1\r\n").await;
 
     assert_eq!(response[0].trim(), "HTTP/1.1 404 NOT FOUND");
+}
+
+#[derive(Clone)]
+struct RequestHandlerWithError;
+
+impl Handler for RequestHandlerWithError {
+    type Future = Pin<Box<dyn Future<Output = crate::model::Result<HttpResponse>> + Send>>;
+
+    fn call(&mut self, request: HttpRequest) -> Self::Future {
+        Box::pin(async move { handle_request_with_error(request).await })
+    }
 }
 
 async fn handle_request_with_error(_request: HttpRequest) -> crate::model::Result<HttpResponse> {
@@ -45,11 +59,23 @@ async fn handle_request_with_error(_request: HttpRequest) -> crate::model::Resul
 
 #[tokio::test]
 async fn test_server_responds_500_internal_server_error() {
-    let addr = set_up(handle_request_with_error).await;
+    let handler = RequestHandlerWithError;
+    let addr = set_up(handler).await;
 
     let response = send_request(&addr, "GET / \r\n").await;
 
     assert_eq!(response[0].trim(), "HTTP/1.1 500 INTERNAL SERVER ERROR");
+}
+
+#[derive(Clone)]
+struct RequestHandlerWithTimeout;
+
+impl Handler for RequestHandlerWithTimeout {
+    type Future = Pin<Box<dyn Future<Output = crate::model::Result<HttpResponse>> + Send>>;
+
+    fn call(&mut self, request: HttpRequest) -> Self::Future {
+        Box::pin(async move { handle_request_with_timeout(request).await })
+    }
 }
 
 async fn handle_request_with_timeout(request: HttpRequest) -> crate::model::Result<HttpResponse> {
@@ -62,20 +88,54 @@ async fn handle_request_with_timeout(request: HttpRequest) -> crate::model::Resu
     Ok(response)
 }
 
-async fn handler_with_timeout(request: HttpRequest) -> crate::model::Result<HttpResponse> {
-    let result =
-        tokio::time::timeout(Duration::from_secs(2), handle_request_with_timeout(request)).await;
+#[derive(Clone)]
+struct Timeout<T> {
+    // T will be some type that implements `Handler`
+    inner_handler: T,
+    duration: Duration,
+}
 
-    match result {
-        Ok(Ok(response)) => Ok(response),
-        Ok(Err(error)) => Err(error),
-        Err(_timeout_elapsed) => Err(Error::App("Timeout exceeded".to_string())),
+impl<T> Timeout<T>
+where
+    T: Handler,
+{
+    fn new(inner_handler: T, duration: Duration) -> Self {
+        Self {
+            inner_handler,
+            duration,
+        }
+    }
+}
+
+impl<T> Handler for Timeout<T>
+where
+    T: Handler + Clone + Send + 'static,
+{
+    type Future = Pin<Box<dyn Future<Output = crate::model::Result<HttpResponse>> + Send>>;
+
+    fn call(&mut self, request: HttpRequest) -> Self::Future {
+        // Get an owned clone of `&mut self`
+        let mut this = self.clone();
+
+        Box::pin(async move {
+            let result =
+                tokio::time::timeout(this.duration, this.inner_handler.call(request)).await;
+
+            match result {
+                Ok(Ok(response)) => Ok(response),
+                Ok(Err(error)) => Err(error),
+                Err(_timeout) => Err(Error::App("Timeout exceeded".to_string())),
+            }
+        })
     }
 }
 
 #[tokio::test]
 async fn test_server_responds_500_timeout() {
-    let addr = set_up(handler_with_timeout).await;
+    let handler = RequestHandlerWithTimeout;
+    let handler = Timeout::new(handler, Duration::from_secs(2));
+
+    let addr = set_up(handler).await;
 
     let response = send_request(&addr, "GET / \r\n").await;
 
@@ -84,7 +144,10 @@ async fn test_server_responds_500_timeout() {
 
 #[tokio::test]
 async fn test_server_application_json_response() {
-    let addr = set_up(handle_request_with_content_type).await;
+    let handler = RequestHandler;
+    let handler = JsonContentType::new(handler);
+
+    let addr = set_up(handler).await;
 
     let response = send_request(&addr, "GET /hi HTTP/1.1\r\n").await;
 
