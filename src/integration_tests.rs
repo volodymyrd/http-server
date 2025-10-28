@@ -1,6 +1,7 @@
 use crate::model::{Error, Handler, HttpMethod, HttpRequest, HttpResponse};
 use crate::server::Server;
 use crate::{JsonContentType, RequestHandler};
+use std::fmt::Debug;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -8,8 +9,9 @@ use tokio::net::TcpStream;
 
 async fn set_up<T>(handle_request: T) -> String
 where
-    T: Handler + Clone + Send + Sync + 'static,
-    <T as Handler>::Future: Send,
+    T: Handler<HttpRequest, Response = HttpResponse> + Clone + Send + Sync + 'static,
+    <T as Handler<HttpRequest>>::Future: Send,
+    <T as Handler<HttpRequest>>::Error: Debug,
 {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -45,7 +47,9 @@ async fn test_server_responds_404_not_found() {
 #[derive(Clone)]
 struct RequestHandlerWithError;
 
-impl Handler for RequestHandlerWithError {
+impl Handler<HttpRequest> for RequestHandlerWithError {
+    type Response = HttpResponse;
+    type Error = Error;
     type Future = Pin<Box<dyn Future<Output = crate::model::Result<HttpResponse>> + Send>>;
 
     fn call(&mut self, request: HttpRequest) -> Self::Future {
@@ -70,9 +74,10 @@ async fn test_server_responds_500_internal_server_error() {
 #[derive(Clone)]
 struct RequestHandlerWithTimeout;
 
-impl Handler for RequestHandlerWithTimeout {
+impl Handler<HttpRequest> for RequestHandlerWithTimeout {
+    type Response = HttpResponse;
+    type Error = Error;
     type Future = Pin<Box<dyn Future<Output = crate::model::Result<HttpResponse>> + Send>>;
-
     fn call(&mut self, request: HttpRequest) -> Self::Future {
         Box::pin(async move { handle_request_with_timeout(request).await })
     }
@@ -95,10 +100,7 @@ struct Timeout<T> {
     duration: Duration,
 }
 
-impl<T> Timeout<T>
-where
-    T: Handler,
-{
+impl<T> Timeout<T> {
     fn new(inner_handler: T, duration: Duration) -> Self {
         Self {
             inner_handler,
@@ -107,10 +109,13 @@ where
     }
 }
 
-impl<T> Handler for Timeout<T>
+impl<T> Handler<HttpRequest> for Timeout<T>
 where
-    T: Handler + Clone + Send + 'static,
+    T: Handler<HttpRequest, Response = HttpResponse, Error = Error> + Clone + Send + 'static,
+    <T as Handler<HttpRequest>>::Future: Send,
 {
+    type Response = HttpResponse;
+    type Error = Error;
     type Future = Pin<Box<dyn Future<Output = crate::model::Result<HttpResponse>> + Send>>;
 
     fn call(&mut self, request: HttpRequest) -> Self::Future {

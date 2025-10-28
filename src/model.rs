@@ -172,8 +172,12 @@ impl HttpResponse {
     }
 }
 
-pub trait Handler {
-    type Future: Future<Output = Result<HttpResponse>> + Send;
+pub trait Handler<Request> {
+    type Response;
 
-    fn call(&mut self, request: HttpRequest) -> Self::Future;
+    type Error;
+
+    type Future: Future<Output = std::result::Result<Self::Response, Self::Error>>;
+
+    fn call(&mut self, request: Request) -> Self::Future;
 }

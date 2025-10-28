@@ -1,5 +1,6 @@
 use crate::model::{Error, Handler, HttpMethod, HttpRequest, HttpResponse, Result};
 use crate::server::Server;
+use std::future::Future;
 use std::pin::Pin;
 use tokio::net::TcpListener;
 
@@ -26,7 +27,9 @@ async fn main() -> Result<()> {
 #[derive(Clone)]
 struct RequestHandler;
 
-impl Handler for RequestHandler {
+impl Handler<HttpRequest> for RequestHandler {
+    type Response = HttpResponse;
+    type Error = Error;
     type Future = Pin<Box<dyn Future<Output = Result<HttpResponse>> + Send>>;
 
     fn call(&mut self, request: HttpRequest) -> Self::Future {
@@ -48,33 +51,32 @@ struct JsonContentType<T> {
     inner_handler: T,
 }
 
-impl<T> JsonContentType<T>
-where
-    T: Handler,
-{
+impl<T> JsonContentType<T> {
     fn new(inner_handler: T) -> Self {
         Self { inner_handler }
     }
 }
 
-impl<T> Handler for JsonContentType<T>
+impl<T> Handler<HttpRequest> for JsonContentType<T>
 where
-    T: Handler + Clone + Send + 'static,
+    T: Handler<HttpRequest, Response = HttpResponse, Error = Error> + Clone + Send + 'static,
+    <T as Handler<HttpRequest>>::Future: Send,
 {
-    type Future = Pin<Box<dyn Future<Output = crate::model::Result<HttpResponse>> + Send>>;
+    type Response = HttpResponse;
+    type Error = Error;
+    type Future = Pin<Box<dyn Future<Output = Result<HttpResponse>> + Send>>;
 
     fn call(&mut self, request: HttpRequest) -> Self::Future {
         let mut this = self.clone();
 
         Box::pin(async move {
-            let response = match request.method_and_path() {
-                (HttpMethod::Get, "/hi") => {
-                    HttpResponse::ok_with_content_type("hi.json", "application/json")
-                }
-                (_, _) => this.inner_handler.call(request).await?,
-            };
-
-            Ok(response)
+            match request.method_and_path() {
+                (HttpMethod::Get, "/hi") => Ok(HttpResponse::ok_with_content_type(
+                    "hi.json",
+                    "application/json",
+                )),
+                (_, _) => this.inner_handler.call(request).await,
+            }
         })
     }
 }
