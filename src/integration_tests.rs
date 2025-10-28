@@ -1,12 +1,14 @@
 use crate::model::{Error, HttpMethod, HttpRequest, HttpResponse};
 use crate::server::Server;
-use crate::{JsonContentType, RequestHandler};
+use crate::{JsonContentType, RequestHandler, model};
+use pin_project::pin_project;
 use std::fmt::Debug;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+use tokio::time::Sleep;
 use tower::Service;
 
 async fn set_up<T>(handle_request: T) -> String
@@ -104,49 +106,76 @@ async fn handle_request_with_timeout(request: HttpRequest) -> crate::model::Resu
     Ok(response)
 }
 
-#[derive(Clone)]
-struct Timeout<T> {
-    // T will be some type that implements `Handler`
-    inner_handler: T,
+#[derive(Debug, Clone)]
+struct Timeout<S> {
+    inner: S,
     duration: Duration,
 }
 
-impl<T> Timeout<T> {
-    fn new(inner_handler: T, duration: Duration) -> Self {
-        Self {
-            inner_handler,
-            duration,
-        }
+impl<S> Timeout<S> {
+    fn new(inner: S, duration: Duration) -> Self {
+        Self { inner, duration }
     }
 }
 
-impl<T> Service<HttpRequest> for Timeout<T>
-where
-    T: Service<HttpRequest, Response = HttpResponse, Error = Error> + Clone + Send + 'static,
-    <T as Service<HttpRequest>>::Future: Send,
-{
-    type Response = HttpResponse;
-    type Error = Error;
-    type Future = Pin<Box<dyn Future<Output = crate::model::Result<HttpResponse>> + Send>>;
+#[pin_project]
+pub struct ResponseFuture<F> {
+    #[pin]
+    response_future: F,
+    #[pin]
+    sleep: Sleep,
+}
 
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        todo!()
+impl<F, Response, Error> Future for ResponseFuture<F>
+where
+    F: Future<Output = Result<Response, Error>>,
+    Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    type Output = Result<Response, Box<dyn std::error::Error + Send + Sync>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+
+        match this.response_future.poll(cx) {
+            Poll::Ready(result) => {
+                let result = result.map_err(Into::into);
+                return Poll::Ready(result);
+            }
+            Poll::Pending => {}
+        }
+
+        match this.sleep.poll(cx) {
+            Poll::Ready(()) => {
+                let error = Box::new(model::Error::App("Timeout exceeded".to_string()));
+                return Poll::Ready(Err(error));
+            }
+            Poll::Pending => {}
+        }
+
+        Poll::Pending
+    }
+}
+
+impl<S, Request> Service<Request> for Timeout<S>
+where
+    S: Service<Request>,
+    S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    type Response = S::Response;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Future = ResponseFuture<S::Future>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, request: HttpRequest) -> Self::Future {
-        // Get an owned clone of `&mut self`
-        let mut this = self.clone();
-
-        Box::pin(async move {
-            let result =
-                tokio::time::timeout(this.duration, this.inner_handler.call(request)).await;
-
-            match result {
-                Ok(Ok(response)) => Ok(response),
-                Ok(Err(error)) => Err(error),
-                Err(_timeout) => Err(Error::App("Timeout exceeded".to_string())),
-            }
-        })
+    fn call(&mut self, request: Request) -> Self::Future {
+        let response_future = self.inner.call(request);
+        let sleep = tokio::time::sleep(self.duration);
+        ResponseFuture {
+            response_future,
+            sleep,
+        }
     }
 }
 
